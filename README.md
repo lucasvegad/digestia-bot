@@ -53,7 +53,7 @@ Ciudadano → Telegram Bot → Vercel Serverless Function
 
 Proyecto del Honorable Concejo Deliberante de Montecarlo, Misiones, como iniciativa de modernización del acceso a información pública municipal mediante inteligencia artificial.
 
-Desarrollado por Lucas Vega — Secretario de Digesto Legal y Modernización.
+Desarrollado por Lucas Vega — Secretario de Digesto Jurídico.
 
 ## ⚖️ Disclaimer
 
