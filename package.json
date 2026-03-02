@@ -1,0 +1,21 @@
+{
+  "name": "digestia-bot",
+  "version": "1.0.0",
+  "description": "DigestIA - Chatbot IA del Digesto Municipal de Montecarlo, Misiones",
+  "type": "module",
+  "scripts": {
+    "ingest": "node scripts/ingest-pdfs.js",
+    "test-search": "node scripts/test-search.js",
+    "set-webhook": "node scripts/set-webhook.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@supabase/supabase-js": "^2.49.1",
+    "pdf-parse": "^1.1.1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "Lucas Vega - MKD Consulting",
+  "license": "MIT"
+}
