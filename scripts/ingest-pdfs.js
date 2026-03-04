@@ -2,17 +2,15 @@ import fs from 'fs';
 import path from 'path';
 import pdf from 'pdf-parse';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { generateEmbedding } from '../lib/gemini.js';
 
-const SUPABASE_URL = process.env.SUPABASE_URL || 'TU_SUPABASE_URL';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'TU_SERVICE_ROLE_KEY';
-const GEMINI_KEY = process.env.GEMINI_API_KEY || 'TU_GEMINI_KEY';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://jjnpesjtqymxlnfnmlxc.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpqbnBlc2p0cXlteGxuZm5tbHhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjQ2OTQ2OSwiZXhwIjoyMDg4MDQ1NDY5fQ.obXvEhztoXs9Z12fa7ICxkdSG4-lBzCBaUJdnwz9fLI';
 const PDF_DIR = process.env.PDF_DIR || './pdfs';
 const PROGRESS_FILE = './ingest-progress.json';
-const RATE_LIMIT_DELAY = 5000;
+const RATE_LIMIT_DELAY = 1000; // HF no tiene rate limit estricto, 1 seg de cortesía
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-const genAI = new GoogleGenerativeAI(GEMINI_KEY);
 
 function loadProgress() {
   if (fs.existsSync(PROGRESS_FILE)) {
@@ -67,19 +65,6 @@ function parseOrdenanza(text) {
 
 async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function generateEmbedding(text) {
-  const model = genAI.getGenerativeModel(
-    { model: 'gemini-embedding-001' },
-    { apiVersion: 'v1beta' }
-  );
-  const result = await model.embedContent({
-    content: { parts: [{ text }], role: 'user' },
-    outputDimensionality: 768
-  });
-  await sleep(RATE_LIMIT_DELAY);
-  return result.embedding.values;
 }
 
 async function ingestPDF(filePath) {
@@ -144,6 +129,7 @@ async function ingestPDF(filePath) {
   if (parsed.articulos.length === 0) {
     console.log(`  ⚠️ Sin artículos, chunk único`);
     const embedding = await generateEmbedding(parsed.textoCompleto);
+    await sleep(RATE_LIMIT_DELAY);
     await supabase.from('chunks').insert({
       ordenanza_id: ordenanzaId,
       contenido: parsed.textoCompleto,
@@ -156,6 +142,7 @@ async function ingestPDF(filePath) {
     const fullText = parsed.articulos.map(a => `${a.numero}: ${a.texto}`).join('\n\n');
     const contextText = `Ordenanza ${parsed.libro}-N° ${parsed.numero}. ${parsed.anterior || ''}. ${fullText}`;
     const embedding = await generateEmbedding(contextText);
+    await sleep(RATE_LIMIT_DELAY);
     await supabase.from('chunks').insert({
       ordenanza_id: ordenanzaId,
       contenido: fullText,
@@ -169,6 +156,7 @@ async function ingestPDF(filePath) {
       const contextText = `Ordenanza ${parsed.libro}-N° ${parsed.numero}. ${parsed.anterior || ''}. ${art.numero}: ${art.texto}`;
       console.log(`  📦 Chunk ${i + 1}/${parsed.articulos.length}: ${art.numero}`);
       const embedding = await generateEmbedding(contextText);
+      await sleep(RATE_LIMIT_DELAY);
       await supabase.from('chunks').insert({
         ordenanza_id: ordenanzaId,
         contenido: art.texto,
@@ -193,7 +181,16 @@ async function main() {
     process.exit(1);
   }
 
-  const allFiles = fs.readdirSync(PDF_DIR).filter(f => f.toLowerCase().endsWith('.pdf'));
+  const allFiles = (function walk(dir) {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap(f =>
+      f.isDirectory()
+        ? walk(path.join(dir, f.name))
+        : f.name.toLowerCase().endsWith('.pdf')
+        ? [path.join(dir, f.name)]
+        : []
+    );
+  })(PDF_DIR).map(f => path.relative(PDF_DIR, f));
+
   console.log(`📄 PDFs encontrados: ${allFiles.length}`);
 
   const progress = loadProgress();
@@ -235,7 +232,7 @@ function printSummary(progress, total) {
   console.log(`❌ Fallidos:    ${progress.failed.length}`);
 
   if (progress.skipped.length > 0) {
-    console.log(`\n⚠️ PDFs saltados (revisar manualmente):`);
+    console.log(`\n⚠️ PDFs saltados:`);
     for (const s of progress.skipped) {
       console.log(`  - ${s.file} (${s.reason})`);
       if (s.preview) console.log(`    Preview: ${s.preview.substring(0, 150)}`);
