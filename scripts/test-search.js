@@ -1,21 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { generateEmbedding } from '../lib/gemini.js';
 
 const supabase = createClient(
-  process.env.SUPABASE_URL || 'TU_SUPABASE_URL',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || 'TU_SERVICE_ROLE_KEY'
+  process.env.SUPABASE_URL || 'https://jjnpesjtqymxlnfnmlxc.supabase.co',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpqbnBlc2p0cXlteGxuZm5tbHhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjQ2OTQ2OSwiZXhwIjoyMDg4MDQ1NDY5fQ.obXvEhztoXs9Z12fa7ICxkdSG4-lBzCBaUJdnwz9fLI'
 );
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || 'TU_GEMINI_KEY');
 
 async function testSearch(query) {
   console.log(`\n🔍 Buscando: "${query}"`);
 
-  // Generar embedding
-  const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
-  const result = await model.embedContent(query);
-  const embedding = result.embedding.values;
+  const embedding = await generateEmbedding(query);
 
-  // Buscar
   const { data, error } = await supabase.rpc('match_chunks', {
     query_embedding: embedding,
     match_threshold: 0.3,
@@ -41,7 +36,6 @@ async function testSearch(query) {
   }
 }
 
-// Tests con las 3 ordenanzas cargadas
 async function main() {
   console.log('🧪 DigestIA - Test de búsqueda semántica\n');
 
