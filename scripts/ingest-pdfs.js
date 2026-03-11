@@ -8,7 +8,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://jjnpesjtqymxlnfnmlxc.s
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'TU_SERVICE_ROLE_KEY';
 const PDF_DIR = process.env.PDF_DIR || './pdfs';
 const PROGRESS_FILE = './ingest-progress.json';
-const RATE_LIMIT_DELAY = 1000; // HF no tiene rate limit estricto, 1 seg de cortesía
+const DELAY_BETWEEN_EMBEDDINGS = 4000; // 4 seg entre embeddings (seguro para free tier)
+const MAX_RETRIES = 5;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -65,6 +66,28 @@ function parseOrdenanza(text) {
 
 async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function generateEmbeddingWithRetry(text) {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const embedding = await generateEmbedding(text);
+      return embedding;
+    } catch (err) {
+      const isRateLimit = err.message?.includes('429') || 
+                          err.message?.includes('RESOURCE_EXHAUSTED') ||
+                          err.message?.includes('quota');
+      
+      if (isRateLimit && attempt < MAX_RETRIES) {
+        // Esperar progresivamente más: 20s, 40s, 60s, 80s
+        const waitTime = attempt * 20000;
+        console.log(`  ⏳ Rate limit (intento ${attempt}/${MAX_RETRIES}). Esperando ${waitTime / 1000}s...`);
+        await sleep(waitTime);
+      } else {
+        throw err;
+      }
+    }
+  }
 }
 
 async function ingestPDF(filePath) {
@@ -128,8 +151,8 @@ async function ingestPDF(filePath) {
 
   if (parsed.articulos.length === 0) {
     console.log(`  ⚠️ Sin artículos, chunk único`);
-    const embedding = await generateEmbedding(parsed.textoCompleto);
-    await sleep(RATE_LIMIT_DELAY);
+    const embedding = await generateEmbeddingWithRetry(parsed.textoCompleto);
+    await sleep(DELAY_BETWEEN_EMBEDDINGS);
     await supabase.from('chunks').insert({
       ordenanza_id: ordenanzaId,
       contenido: parsed.textoCompleto,
@@ -141,8 +164,8 @@ async function ingestPDF(filePath) {
     console.log(`  📦 Ordenanza corta (${parsed.articulos.length} arts), chunk unificado`);
     const fullText = parsed.articulos.map(a => `${a.numero}: ${a.texto}`).join('\n\n');
     const contextText = `Ordenanza ${parsed.libro}-N° ${parsed.numero}. ${parsed.anterior || ''}. ${fullText}`;
-    const embedding = await generateEmbedding(contextText);
-    await sleep(RATE_LIMIT_DELAY);
+    const embedding = await generateEmbeddingWithRetry(contextText);
+    await sleep(DELAY_BETWEEN_EMBEDDINGS);
     await supabase.from('chunks').insert({
       ordenanza_id: ordenanzaId,
       contenido: fullText,
@@ -155,8 +178,8 @@ async function ingestPDF(filePath) {
       const art = parsed.articulos[i];
       const contextText = `Ordenanza ${parsed.libro}-N° ${parsed.numero}. ${parsed.anterior || ''}. ${art.numero}: ${art.texto}`;
       console.log(`  📦 Chunk ${i + 1}/${parsed.articulos.length}: ${art.numero}`);
-      const embedding = await generateEmbedding(contextText);
-      await sleep(RATE_LIMIT_DELAY);
+      const embedding = await generateEmbeddingWithRetry(contextText);
+      await sleep(DELAY_BETWEEN_EMBEDDINGS);
       await supabase.from('chunks').insert({
         ordenanza_id: ordenanzaId,
         contenido: art.texto,
@@ -186,68 +209,4 @@ async function main() {
       f.isDirectory()
         ? walk(path.join(dir, f.name))
         : f.name.toLowerCase().endsWith('.pdf')
-        ? [path.join(dir, f.name)]
-        : []
-    );
-  })(PDF_DIR).map(f => path.relative(PDF_DIR, f));
-
-  console.log(`📄 PDFs encontrados: ${allFiles.length}`);
-
-  const progress = loadProgress();
-  const completedSet = new Set(progress.completed);
-  const pending = allFiles.filter(f => !completedSet.has(f));
-
-  console.log(`⏭️ Ya procesados: ${progress.completed.length} | Pendientes: ${pending.length}`);
-
-  if (pending.length === 0) {
-    console.log('✅ Todos los PDFs ya fueron procesados.');
-    printSummary(progress, allFiles.length);
-    return;
-  }
-
-  for (const file of pending) {
-    try {
-      const result = await ingestPDF(path.join(PDF_DIR, file));
-      if (result.status === 'ok') {
-        progress.completed.push(file);
-      } else if (result.status === 'skipped') {
-        progress.skipped.push({ file, reason: result.reason, preview: result.preview });
-      } else {
-        progress.failed.push({ file, reason: result.reason });
-      }
-    } catch (err) {
-      console.error(`❌ Error inesperado procesando ${file}:`, err.message);
-      progress.failed.push({ file, reason: err.message });
-    }
-    saveProgress(progress);
-  }
-
-  printSummary(progress, allFiles.length);
-}
-
-function printSummary(progress, total) {
-  console.log(`\n========================================`);
-  console.log(`✅ Completados: ${progress.completed.length}/${total}`);
-  console.log(`⚠️ Saltados:    ${progress.skipped.length}`);
-  console.log(`❌ Fallidos:    ${progress.failed.length}`);
-
-  if (progress.skipped.length > 0) {
-    console.log(`\n⚠️ PDFs saltados:`);
-    for (const s of progress.skipped) {
-      console.log(`  - ${s.file} (${s.reason})`);
-      if (s.preview) console.log(`    Preview: ${s.preview.substring(0, 150)}`);
-    }
-  }
-
-  if (progress.failed.length > 0) {
-    console.log(`\n❌ PDFs fallidos:`);
-    for (const f of progress.failed) {
-      console.log(`  - ${f.file}: ${f.reason}`);
-    }
-  }
-
-  console.log(`\n💡 Para reintentar fallidos: eliminá sus entradas de ingest-progress.json`);
-  console.log(`========================================`);
-}
-
-main().catch(console.error);
+        ? [path.join(dir, f.na
