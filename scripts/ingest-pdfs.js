@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { generateEmbedding } from '../lib/gemini.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://jjnpesjtqymxlnfnmlxc.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpqbnBlc2p0cXlteGxuZm5tbHhjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjQ2OTQ2OSwiZXhwIjoyMDg4MDQ1NDY5fQ.obXvEhztoXs9Z12fa7ICxkdSG4-lBzCBaUJdnwz9fLI';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'TU_SERVICE_ROLE_KEY';
 const PDF_DIR = process.env.PDF_DIR || './pdfs';
 const PROGRESS_FILE = './ingest-progress.json';
 const RATE_LIMIT_DELAY = 1000; // HF no tiene rate limit estricto, 1 seg de cortesía
