@@ -1,33 +1,27 @@
 name: Ingest PDFs
-
 on:
   workflow_dispatch:
-
 jobs:
   ingest:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install dependencies
         run: npm install
-
       - name: Install gdown
         run: pip install gdown
-
       - name: Download PDFs from Google Drive
         run: |
           mkdir -p pdfs
-          gdown --folder 16lIm3ZfO4HDl-7zF1Vn1IR61KBCVRGSU --output pdfs --remaining-ok
-
+          gdown --folder 16lIm3ZfO4HDl-7zF1Vn1IR61KBCVRGSU --output pdfs --remaining-ok || echo "Algunos archivos no pudieron descargarse, continuando..."
+          echo "PDFs descargados:"
+          find pdfs -name "*.pdf" | wc -l
       - name: Run ingestion
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -35,7 +29,6 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_API_KEY: ${{ secrets.HF_API_KEY }}
         run: node scripts/ingest-pdfs.js
-
       - name: Upload progress file
         if: always()
         uses: actions/upload-artifact@v4
