@@ -8,7 +8,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://jjnpesjtqymxlnfnmlxc.s
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'TU_SERVICE_ROLE_KEY';
 const PDF_DIR = process.env.PDF_DIR || './pdfs';
 const PROGRESS_FILE = './ingest-progress.json';
-const DELAY_BETWEEN_EMBEDDINGS = 4000; // 4 seg entre embeddings (seguro para free tier)
+const DELAY_BETWEEN_EMBEDDINGS = 4000;
 const MAX_RETRIES = 5;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -74,12 +74,11 @@ async function generateEmbeddingWithRetry(text) {
       const embedding = await generateEmbedding(text);
       return embedding;
     } catch (err) {
-      const isRateLimit = err.message?.includes('429') || 
+      const isRateLimit = err.message?.includes('429') ||
                           err.message?.includes('RESOURCE_EXHAUSTED') ||
                           err.message?.includes('quota');
-      
+
       if (isRateLimit && attempt < MAX_RETRIES) {
-        // Esperar progresivamente más: 20s, 40s, 60s, 80s
         const waitTime = attempt * 20000;
         console.log(`  ⏳ Rate limit (intento ${attempt}/${MAX_RETRIES}). Esperando ${waitTime / 1000}s...`);
         await sleep(waitTime);
@@ -195,6 +194,20 @@ async function ingestPDF(filePath) {
   return { status: 'ok', chunks: chunkCount };
 }
 
+function getAllPDFs(dir) {
+  const results = [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...getAllPDFs(fullPath));
+    } else if (entry.name.toLowerCase().endsWith('.pdf')) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
 async function main() {
   console.log('🚀 DigestIA - Ingesta de PDFs');
   console.log(`📂 Directorio: ${PDF_DIR}`);
@@ -204,9 +217,66 @@ async function main() {
     process.exit(1);
   }
 
-  const allFiles = (function walk(dir) {
-    return fs.readdirSync(dir, { withFileTypes: true }).flatMap(f =>
-      f.isDirectory()
-        ? walk(path.join(dir, f.name))
-        : f.name.toLowerCase().endsWith('.pdf')
-        ? [path.join(dir, f.na
+  const allFullPaths = getAllPDFs(PDF_DIR);
+  const allFiles = allFullPaths.map(f => path.relative(PDF_DIR, f));
+
+  console.log(`📄 PDFs encontrados: ${allFiles.length}`);
+
+  const progress = loadProgress();
+  const completedSet = new Set(progress.completed);
+  const pending = allFiles.filter(f => !completedSet.has(f));
+
+  console.log(`⏭️ Ya procesados: ${progress.completed.length} | Pendientes: ${pending.length}`);
+
+  if (pending.length === 0) {
+    console.log('✅ Todos los PDFs ya fueron procesados.');
+    printSummary(progress, allFiles.length);
+    return;
+  }
+
+  for (const file of pending) {
+    try {
+      const result = await ingestPDF(path.join(PDF_DIR, file));
+      if (result.status === 'ok') {
+        progress.completed.push(file);
+      } else if (result.status === 'skipped') {
+        progress.skipped.push({ file, reason: result.reason, preview: result.preview });
+      } else {
+        progress.failed.push({ file, reason: result.reason });
+      }
+    } catch (err) {
+      console.error(`❌ Error inesperado procesando ${file}:`, err.message);
+      progress.failed.push({ file, reason: err.message });
+    }
+    saveProgress(progress);
+  }
+
+  printSummary(progress, allFiles.length);
+}
+
+function printSummary(progress, total) {
+  console.log(`\n========================================`);
+  console.log(`✅ Completados: ${progress.completed.length}/${total}`);
+  console.log(`⚠️ Saltados:    ${progress.skipped.length}`);
+  console.log(`❌ Fallidos:    ${progress.failed.length}`);
+
+  if (progress.skipped.length > 0) {
+    console.log(`\n⚠️ PDFs saltados:`);
+    for (const s of progress.skipped) {
+      console.log(`  - ${s.file} (${s.reason})`);
+      if (s.preview) console.log(`    Preview: ${s.preview.substring(0, 150)}`);
+    }
+  }
+
+  if (progress.failed.length > 0) {
+    console.log(`\n❌ PDFs fallidos:`);
+    for (const f of progress.failed) {
+      console.log(`  - ${f.file}: ${f.reason}`);
+    }
+  }
+
+  console.log(`\n💡 Para reintentar fallidos: eliminá sus entradas de ingest-progress.json`);
+  console.log(`========================================`);
+}
+
+main().catch(console.error);
